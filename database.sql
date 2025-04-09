@@ -12,35 +12,125 @@ DROP TABLE IF EXISTS users;
 CREATE TABLE users (
     id SERIAL PRIMARY KEY,
     username VARCHAR(50) UNIQUE NOT NULL,
-    -- password_hash VARCHAR(255) NOT NULL, -- Skipping password for MVP
-    email VARCHAR(100) UNIQUE, -- Add email later if needed
+    password_hash VARCHAR(255) NOT NULL,
+    email VARCHAR(100) UNIQUE NOT NULL,
     role VARCHAR(10) NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'seller', 'admin')), -- Using VARCHAR for simplicity, ENUM is better
+    email_verified BOOLEAN DEFAULT FALSE,
+    profile_picture VARCHAR(255),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Sessions Table for managing user sessions
+CREATE TABLE sessions (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token VARCHAR(255) NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Password Reset Tokens Table
+CREATE TABLE password_reset_tokens (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token VARCHAR(255) NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Email Verification Tokens Table
+CREATE TABLE email_verification_tokens (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token VARCHAR(255) NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Index for sessions
+CREATE INDEX idx_sessions_user_id ON sessions(user_id);
+CREATE INDEX idx_sessions_token ON sessions(token);
+
+-- Index for password reset tokens
+CREATE INDEX idx_password_reset_tokens_user_id ON password_reset_tokens(user_id);
+CREATE INDEX idx_password_reset_tokens_token ON password_reset_tokens(token);
+
+-- Index for email verification tokens
+CREATE INDEX idx_email_verification_tokens_user_id ON email_verification_tokens(user_id);
+CREATE INDEX idx_email_verification_tokens_token ON email_verification_tokens(token);
+
+-- Product Categories Table
+CREATE TABLE categories (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL UNIQUE,
+    description TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Products Table
 CREATE TABLE products (
     id SERIAL PRIMARY KEY,
-    name VARCHAR(100) NOT NULL,
+    seller_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
     description TEXT,
     price DECIMAL(10, 2) NOT NULL,
-    image_url VARCHAR(255),
-    seller_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, -- Link product to a seller
+    stock_quantity INTEGER NOT NULL DEFAULT 0,
+    category_id INTEGER REFERENCES categories(id),
+    status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'deleted')),
+    featured BOOLEAN DEFAULT FALSE,
+    main_image VARCHAR(255),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-    -- Add stock quantity, category etc. later
 );
 
--- Indexes (optional but good for performance)
+-- Product Images Table
+CREATE TABLE product_images (
+    id SERIAL PRIMARY KEY,
+    product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    image_url VARCHAR(255) NOT NULL,
+    is_main BOOLEAN DEFAULT FALSE,
+    display_order INTEGER DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Product Reviews Table
+CREATE TABLE product_reviews (
+    id SERIAL PRIMARY KEY,
+    product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+    review_text TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(product_id, user_id)
+);
+
+-- Indexes for products
 CREATE INDEX idx_products_seller_id ON products(seller_id);
+CREATE INDEX idx_products_category_id ON products(category_id);
+CREATE INDEX idx_products_status ON products(status);
+CREATE INDEX idx_products_featured ON products(featured);
+
+-- Indexes for product images
+CREATE INDEX idx_product_images_product_id ON product_images(product_id);
+
+-- Indexes for product reviews
+CREATE INDEX idx_product_reviews_product_id ON product_reviews(product_id);
+CREATE INDEX idx_product_reviews_user_id ON product_reviews(user_id);
+
+
+
+
 CREATE INDEX idx_users_username ON users(username);
 
 -- Seed Data
--- Insert Users (no passwords for MVP)
-INSERT INTO users (username, role) VALUES
-('testuser', 'user'),
-('testseller', 'seller'),
-('testadmin', 'admin');
+-- Insert Users with hashed passwords (password is 'password123' for all users)
+INSERT INTO users (username, email, password_hash, role) VALUES
+('testuser', 'user@example.com', '$2b$10$6KVNzIgQmQGEPHmCQSWyre3VAF9UVyusVUKFTLtZ3BrFKJ8QvivLe', 'user'),
+('testseller', 'seller@example.com', '$2b$10$6KVNzIgQmQGEPHmCQSWyre3VAF9UVyusVUKFTLtZ3BrFKJ8QvivLe', 'seller'),
+('testadmin', 'admin@example.com', '$2b$10$6KVNzIgQmQGEPHmCQSWyre3VAF9UVyusVUKFTLtZ3BrFKJ8QvivLe', 'admin');
 
 -- Insert Products (linked to 'testseller' user, assuming ID 2)
 -- Make sure the seller_id corresponds to the ID generated for 'testseller'
@@ -75,7 +165,11 @@ BEFORE UPDATE ON products
 FOR EACH ROW
 EXECUTE FUNCTION trigger_set_timestamp();
 
--- You might need a similar trigger for the users table if you add more fields
+-- Trigger for users table
+CREATE TRIGGER set_timestamp_users
+BEFORE UPDATE ON users
+FOR EACH ROW
+EXECUTE FUNCTION trigger_set_timestamp();
 
 
 -- Verify insertions

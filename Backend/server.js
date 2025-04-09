@@ -3,20 +3,33 @@ require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
+const fileUpload = require('express-fileupload');
+const path = require('path');
 const productRoutes = require('./routes/products');
-const authRoutes = require('./routes/auth'); // Simulated auth routes
+const authRoutes = require('./routes/auth');
+const uploadsRoutes = require('./routes/uploads');
 const http = require('http');
 
 const app = express();
 const PORT = process.env.PORT || 5001; // Changed to 5001 to avoid conflict
 
 // Middleware
-app.use(cors()); // Allow requests from React frontend (different port)
+app.use(cors({
+    origin: 'http://localhost:3000', // React frontend URL
+    credentials: true // Allow cookies to be sent with requests
+}));
 app.use(express.json()); // Parse JSON request bodies
+app.use(cookieParser()); // Parse cookies
+app.use(fileUpload()); // Handle file uploads
+
+// Serve static files from uploads directory
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // API Routes
 app.use('/api/products', productRoutes);
-app.use('/api/auth', authRoutes); // Use simulated auth routes
+app.use('/api/auth', authRoutes); // Use authentication routes
+app.use('/api/uploads', uploadsRoutes); // Use uploads routes
 
 // Basic Root Route
 app.get('/', (req, res) => {
