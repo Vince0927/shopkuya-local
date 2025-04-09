@@ -8,37 +8,68 @@ let transporter;
 
 // Initialize the transporter
 const initTransporter = async () => {
-    // If we're in development mode, create a test account
-    if (process.env.NODE_ENV !== 'production' && !process.env.EMAIL_HOST) {
-        // Generate test SMTP service account from ethereal.email
-        const testAccount = await nodemailer.createTestAccount();
-        
-        // Create a SMTP transporter object
-        transporter = nodemailer.createTransport({
-            host: 'smtp.ethereal.email',
-            port: 587,
-            secure: false, // true for 465, false for other ports
-            auth: {
-                user: testAccount.user, // generated ethereal user
-                pass: testAccount.pass, // generated ethereal password
-            },
-        });
-        
-        console.log('Using Ethereal test account for email:', testAccount.user);
-    } else {
-        // Create a real SMTP transporter object using environment variables
-        transporter = nodemailer.createTransport({
-            host: process.env.EMAIL_HOST,
-            port: process.env.EMAIL_PORT || 587,
-            secure: process.env.EMAIL_SECURE === 'true',
-            auth: {
-                user: process.env.EMAIL_USER,
-                pass: process.env.EMAIL_PASS,
-            },
-        });
-        
-        console.log('Using real email service for sending emails');
+    try {
+        // If we're in development mode, create a test account
+        if (process.env.NODE_ENV !== 'production' && !process.env.EMAIL_HOST) {
+            try {
+                // Generate test SMTP service account from ethereal.email
+                const testAccount = await nodemailer.createTestAccount();
+
+                // Create a SMTP transporter object
+                transporter = nodemailer.createTransport({
+                    host: 'smtp.ethereal.email',
+                    port: 587,
+                    secure: false, // true for 465, false for other ports
+                    auth: {
+                        user: testAccount.user, // generated ethereal user
+                        pass: testAccount.pass, // generated ethereal password
+                    },
+                });
+
+                console.log('Using Ethereal test account for email:', testAccount.user);
+            } catch (error) {
+                console.error('Failed to create Ethereal test account:', error);
+                // Fallback to a dummy transporter that logs instead of sending
+                createDummyTransporter();
+            }
+        } else {
+            // Create a real SMTP transporter object using environment variables
+            transporter = nodemailer.createTransport({
+                host: process.env.EMAIL_HOST,
+                port: process.env.EMAIL_PORT || 587,
+                secure: process.env.EMAIL_SECURE === 'true',
+                auth: {
+                    user: process.env.EMAIL_USER,
+                    pass: process.env.EMAIL_PASS,
+                },
+            });
+
+            console.log('Using real email service for sending emails');
+        }
+    } catch (error) {
+        console.error('Error initializing email transporter:', error);
+        // Fallback to a dummy transporter that logs instead of sending
+        createDummyTransporter();
     }
+};
+
+// Create a dummy transporter that just logs emails instead of sending them
+const createDummyTransporter = () => {
+    console.log('Creating dummy email transporter that will log emails instead of sending them');
+    transporter = {
+        sendMail: (options) => {
+            console.log('Dummy email would be sent:', {
+                from: options.from,
+                to: options.to,
+                subject: options.subject,
+                text: options.text?.substring(0, 100) + '...',
+            });
+            return Promise.resolve({
+                messageId: 'dummy-message-id-' + Date.now(),
+                response: 'Dummy email logged instead of sent'
+            });
+        }
+    };
 };
 
 // Initialize the transporter when the service is first required
@@ -58,8 +89,13 @@ const sendEmail = async ({ to, subject, text, html }) => {
         // Make sure transporter is initialized
         if (!transporter) {
             await initTransporter();
+
+            // If still no transporter, create a dummy one
+            if (!transporter) {
+                createDummyTransporter();
+            }
         }
-        
+
         // Send mail with defined transport object
         const info = await transporter.sendMail({
             from: process.env.EMAIL_FROM || '"ShopKuya" <noreply@shopkuya.com>',
@@ -68,18 +104,27 @@ const sendEmail = async ({ to, subject, text, html }) => {
             text,
             html,
         });
-        
+
         console.log('Message sent: %s', info.messageId);
-        
+
         // Preview only available when sending through an Ethereal account
-        if (process.env.NODE_ENV !== 'production' && !process.env.EMAIL_HOST) {
-            console.log('Preview URL: %s', nodemailer.getTestMessageUrl(info));
+        if (process.env.NODE_ENV !== 'production' && !process.env.EMAIL_HOST && nodemailer.getTestMessageUrl) {
+            try {
+                console.log('Preview URL: %s', nodemailer.getTestMessageUrl(info));
+            } catch (previewError) {
+                console.error('Error generating preview URL:', previewError);
+            }
         }
-        
+
         return info;
     } catch (error) {
         console.error('Error sending email:', error);
-        throw error;
+        // Instead of throwing, return a dummy response
+        return {
+            messageId: 'error-fallback-' + Date.now(),
+            response: 'Email sending failed, but registration can continue',
+            error: error.message
+        };
     }
 };
 
@@ -92,25 +137,25 @@ const sendEmail = async ({ to, subject, text, html }) => {
  */
 const sendPasswordResetEmail = async (email, token, username) => {
     const resetUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/reset-password/${token}`;
-    
+
     const subject = 'Reset Your ShopKuya Password';
-    
+
     const text = `
         Hello ${username},
-        
+
         You requested a password reset for your ShopKuya account.
-        
+
         Please click the link below to reset your password:
         ${resetUrl}
-        
+
         This link will expire in 1 hour.
-        
+
         If you did not request a password reset, please ignore this email.
-        
+
         Best regards,
         The ShopKuya Team
     `;
-    
+
     const html = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
             <h2 style="color: #333;">Reset Your ShopKuya Password</h2>
@@ -125,7 +170,7 @@ const sendPasswordResetEmail = async (email, token, username) => {
             <p>Best regards,<br>The ShopKuya Team</p>
         </div>
     `;
-    
+
     return sendEmail({ to: email, subject, text, html });
 };
 
@@ -138,23 +183,23 @@ const sendPasswordResetEmail = async (email, token, username) => {
  */
 const sendWelcomeEmail = async (email, token, username) => {
     const verifyUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/verify-email/${token}`;
-    
+
     const subject = 'Welcome to ShopKuya - Verify Your Email';
-    
+
     const text = `
         Hello ${username},
-        
+
         Welcome to ShopKuya! We're excited to have you on board.
-        
+
         Please click the link below to verify your email address:
         ${verifyUrl}
-        
+
         This link will expire in 24 hours.
-        
+
         Best regards,
         The ShopKuya Team
     `;
-    
+
     const html = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
             <h2 style="color: #333;">Welcome to ShopKuya!</h2>
@@ -167,7 +212,7 @@ const sendWelcomeEmail = async (email, token, username) => {
             <p>Best regards,<br>The ShopKuya Team</p>
         </div>
     `;
-    
+
     return sendEmail({ to: email, subject, text, html });
 };
 

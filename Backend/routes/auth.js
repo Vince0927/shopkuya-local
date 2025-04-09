@@ -29,6 +29,10 @@ router.get('/me', authenticate, (req, res) => {
  * POST /api/auth/register - Register a new user
  */
 router.post('/register', async (req, res) => {
+    console.log('Register endpoint called with body:', {
+        ...req.body,
+        password: req.body.password ? '***HIDDEN***' : undefined
+    });
     try {
         const { username, email, password, role = 'user' } = req.body;
 
@@ -63,28 +67,100 @@ router.post('/register', async (req, res) => {
 
         // Hash password
         const saltRounds = 10;
-        const passwordHash = await bcrypt.hash(password, saltRounds);
+        let passwordHash;
+        try {
+            passwordHash = await bcrypt.hash(password, saltRounds);
+            console.log('Password hashed successfully');
+        } catch (hashError) {
+            console.error('Error hashing password:', hashError);
+            return res.status(500).json({
+                error: 'Registration Error',
+                message: 'Error processing your registration. Please try again.'
+            });
+        }
+
+        // Check the users table schema to determine the correct password column name
+        let passwordColumnName = 'password_hash'; // Default column name from schema
+        try {
+            // Try to get the column names from the users table
+            const tableInfoResult = await db.query(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = 'users'"
+            );
+
+            const columnNames = tableInfoResult.rows.map(row => row.column_name);
+            console.log('Available columns in users table:', columnNames);
+
+            // Check if password_hash exists, otherwise look for alternatives
+            if (!columnNames.includes('password_hash')) {
+                if (columnNames.includes('password')) {
+                    passwordColumnName = 'password';
+                    console.log('Using "password" column instead of "password_hash"');
+                } else {
+                    console.error('No suitable password column found in users table');
+                    return res.status(500).json({
+                        error: 'Registration Error',
+                        message: 'Database schema issue. Please contact support.'
+                    });
+                }
+            }
+        } catch (schemaError) {
+            console.error('Error checking database schema:', schemaError);
+            // Continue with default column name and hope for the best
+        }
 
         // Insert new user
-        const result = await db.query(
-            'INSERT INTO users (username, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, username, email, role',
-            [username, email, passwordHash, role]
-        );
+        let result;
+        try {
+            // Dynamically build the query based on the password column name
+            const query = `INSERT INTO users (username, email, ${passwordColumnName}, role)
+                          VALUES ($1, $2, $3, $4) RETURNING id, username, email, role`;
+
+            result = await db.query(query, [username, email, passwordHash, role]);
+            console.log('User inserted successfully');
+        } catch (dbError) {
+            console.error('Error inserting user into database:', dbError);
+            // Check for unique violation
+            if (dbError.code === '23505') {
+                return res.status(409).json({
+                    error: 'Registration Error',
+                    message: 'Username or email already exists.'
+                });
+            }
+            return res.status(500).json({
+                error: 'Registration Error',
+                message: 'Error creating user account. Please try again.',
+                details: process.env.NODE_ENV === 'development' ? dbError.message : undefined
+            });
+        }
 
         const newUser = result.rows[0];
 
         // Generate verification token
-        const token = crypto.randomBytes(32).toString('hex');
+        let token;
+        try {
+            token = crypto.randomBytes(32).toString('hex');
+            console.log('Verification token generated successfully');
+        } catch (tokenError) {
+            console.error('Error generating verification token:', tokenError);
+            token = Date.now().toString(36) + Math.random().toString(36).substring(2); // Fallback token
+            console.log('Using fallback verification token');
+        }
 
         // Calculate expiration (24 hours from now)
         const expiresAt = new Date();
         expiresAt.setHours(expiresAt.getHours() + 24);
 
         // Store token in database
-        await db.query(
-            'INSERT INTO email_verification_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)',
-            [newUser.id, token, expiresAt]
-        );
+        try {
+            await db.query(
+                'INSERT INTO email_verification_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)',
+                [newUser.id, token, expiresAt]
+            );
+            console.log('Verification token stored in database');
+        } catch (tokenDbError) {
+            console.error('Error storing verification token:', tokenDbError);
+            // Continue with registration even if token storage fails
+        }
 
         // Send verification email
         try {
@@ -93,6 +169,12 @@ router.post('/register', async (req, res) => {
         } catch (emailError) {
             console.error('Failed to send verification email:', emailError);
             // Continue with registration even if email fails
+            // Log more details about the error
+            console.error('Email error details:', {
+                error: emailError.message,
+                stack: emailError.stack,
+                code: emailError.code
+            });
         }
 
         res.status(201).json({
@@ -101,9 +183,21 @@ router.post('/register', async (req, res) => {
         });
     } catch (err) {
         console.error('Registration error:', err.message);
+        console.error('Error stack:', err.stack);
+        console.error('Full error object:', JSON.stringify(err, Object.getOwnPropertyNames(err)));
+
+        // Check for specific error types
+        if (err.code === '23505') { // PostgreSQL unique violation error code
+            return res.status(409).json({
+                error: 'Registration Error',
+                message: 'Username or email already exists.'
+            });
+        }
+
         res.status(500).json({
             error: 'Registration Error',
-            message: 'Failed to register user. Please try again later.'
+            message: 'Failed to register user. Please try again later.',
+            details: process.env.NODE_ENV === 'development' ? err.message : undefined
         });
     }
 });
@@ -138,8 +232,25 @@ router.post('/login', async (req, res) => {
 
         const user = userResult.rows[0];
 
+        // Determine which password field to use
+        let hashedPassword = user.password_hash;
+
+        // If password_hash doesn't exist, try password field
+        if (hashedPassword === undefined) {
+            if (user.password !== undefined) {
+                hashedPassword = user.password;
+                console.log('Using "password" field instead of "password_hash"');
+            } else {
+                console.error('No password field found in user record');
+                return res.status(500).json({
+                    error: 'Authentication Error',
+                    message: 'Database schema issue. Please contact support.'
+                });
+            }
+        }
+
         // Compare password
-        const passwordMatch = await bcrypt.compare(password, user.password_hash);
+        const passwordMatch = await bcrypt.compare(password, hashedPassword);
 
         if (!passwordMatch) {
             return res.status(401).json({
@@ -536,6 +647,74 @@ router.post('/resend-verification', async (req, res) => {
         res.status(500).json({
             error: 'Verification Error',
             message: 'Failed to resend verification email. Please try again later.'
+        });
+    }
+});
+
+/**
+ * GET /api/auth/test-db - Test database connection
+ */
+router.get('/test-db', async (req, res) => {
+    try {
+        const result = await db.query('SELECT NOW() as current_time');
+        res.json({
+            message: 'Database connection successful',
+            time: result.rows[0].current_time
+        });
+    } catch (err) {
+        console.error('Database test error:', err);
+        res.status(500).json({
+            error: 'Database Error',
+            message: 'Failed to connect to database',
+            details: process.env.NODE_ENV === 'development' ? err.message : undefined
+        });
+    }
+});
+
+/**
+ * GET /api/auth/check-schema - Check database schema
+ */
+router.get('/check-schema', async (req, res) => {
+    try {
+        // Check users table
+        const usersTableResult = await db.query(
+            "SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'users'"
+        );
+
+        // Check if users table exists
+        if (usersTableResult.rows.length === 0) {
+            return res.status(500).json({
+                error: 'Schema Error',
+                message: 'Users table not found. Database may not be properly initialized.'
+            });
+        }
+
+        // Check for required tables
+        const tablesResult = await db.query(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
+        );
+
+        const tables = tablesResult.rows.map(row => row.table_name);
+
+        // Check for email verification tokens table
+        const hasEmailVerificationTable = tables.includes('email_verification_tokens');
+
+        res.json({
+            message: 'Database schema check completed',
+            users_table: {
+                columns: usersTableResult.rows,
+                has_password_hash: usersTableResult.rows.some(col => col.column_name === 'password_hash'),
+                has_password: usersTableResult.rows.some(col => col.column_name === 'password')
+            },
+            tables: tables,
+            has_email_verification_table: hasEmailVerificationTable
+        });
+    } catch (err) {
+        console.error('Schema check error:', err);
+        res.status(500).json({
+            error: 'Schema Error',
+            message: 'Failed to check database schema',
+            details: process.env.NODE_ENV === 'development' ? err.message : undefined
         });
     }
 });

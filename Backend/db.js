@@ -6,7 +6,14 @@ require('dotenv').config();
 if (!process.env.DATABASE_URL) {
     console.error('DATABASE_URL is not defined in environment variables!');
     console.error('Please create a .env file with DATABASE_URL=postgresql://username:password@localhost:5432/database_name');
-    process.exit(1); // Exit with error
+
+    // Instead of exiting, set a default for development
+    if (process.env.NODE_ENV !== 'production') {
+        console.warn('Using default DATABASE_URL for development');
+        process.env.DATABASE_URL = 'postgresql://postgres:postgres@localhost:5432/shopkuya';
+    } else {
+        process.exit(1); // Only exit in production
+    }
 }
 
 // Create connection pool
@@ -38,9 +45,17 @@ module.exports = {
      */
     query: async (text, params) => {
         try {
-            return await pool.query(text, params);
+            console.log('Executing query:', { text, params: Array.isArray(params) ? params : 'No params' });
+            const result = await pool.query(text, params);
+            return result;
         } catch (error) {
             console.error('Database query error:', error.message);
+            console.error('Query that failed:', { text, params: Array.isArray(params) ? params : 'No params' });
+
+            // Add more details to the error
+            error.query = text;
+            error.params = params;
+
             throw error; // Re-throw to let route handlers catch it
         }
     },
