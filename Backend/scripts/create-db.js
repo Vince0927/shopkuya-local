@@ -5,7 +5,7 @@ async function createDatabase() {
     // Connect to the default 'postgres' database to create a new database
     const client = new Client({
         user: 'postgres',
-        password: 'Posgtresql143!',
+        password: 'Postgresql143!',
         host: 'localhost',
         port: 5432,
         database: 'postgres'

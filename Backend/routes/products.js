@@ -16,7 +16,7 @@ router.get('/', async (req, res) => {
                 p.name,
                 p.description,
                 p.price,
-                p.image_url,
+                p.main_image,
                 p.created_at,
                 u.username as seller_username
             FROM products p
@@ -56,7 +56,7 @@ router.get('/:id', async (req, res) => {
                 p.name,
                 p.description,
                 p.price,
-                p.image_url,
+                p.main_image,
                 p.created_at,
                 u.username as seller_username
             FROM products p

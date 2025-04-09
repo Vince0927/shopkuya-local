@@ -127,14 +127,14 @@ CREATE INDEX idx_users_username ON users(username);
 
 -- Seed Data
 -- Insert Users with hashed passwords (password is 'password123' for all users)
-INSERT INTO users (username, email, password_hash, role) VALUES
-('testuser', 'user@example.com', '$2b$10$6KVNzIgQmQGEPHmCQSWyre3VAF9UVyusVUKFTLtZ3BrFKJ8QvivLe', 'user'),
-('testseller', 'seller@example.com', '$2b$10$6KVNzIgQmQGEPHmCQSWyre3VAF9UVyusVUKFTLtZ3BrFKJ8QvivLe', 'seller'),
-('testadmin', 'admin@example.com', '$2b$10$6KVNzIgQmQGEPHmCQSWyre3VAF9UVyusVUKFTLtZ3BrFKJ8QvivLe', 'admin');
+INSERT INTO users (username, email, password_hash, role, email_verified) VALUES
+('testuser', 'user@example.com', '$2b$10$.Cc7dLSrkus5nAHgfDIucunmI91meTfosBC.uJCT7LJOp.pJVqoPK', 'user', TRUE),
+('testseller', 'seller@example.com', '$2b$10$.Cc7dLSrkus5nAHgfDIucunmI91meTfosBC.uJCT7LJOp.pJVqoPK', 'seller', TRUE),
+('testadmin', 'admin@example.com', '$2b$10$.Cc7dLSrkus5nAHgfDIucunmI91meTfosBC.uJCT7LJOp.pJVqoPK', 'admin', TRUE);
 
 -- Insert Products (linked to 'testseller' user, assuming ID 2)
 -- Make sure the seller_id corresponds to the ID generated for 'testseller'
-INSERT INTO products (name, description, price, image_url, seller_id) VALUES
+INSERT INTO products (name, description, price, main_image, seller_id) VALUES
 (
     'Air Jordan 1 Retro High OG "Chicago Lost & Found"',
     'A legendary silhouette with a vintage aesthetic, mimicking an original pair found decades later.',
